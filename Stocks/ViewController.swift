@@ -2,37 +2,73 @@
 //  ViewController.swift
 //  Stocks
 //
-//  Created by Никита Зименко on 11.07.2021.
+//  Created by Никита Зименко on 04.09.2021.
 //
 
 import UIKit
 
-
-class ViewController: UIViewController, UIPickerViewDataSource, UIPickerViewDelegate {
+final class ViewController: UIViewController {
     
-    private let companies: [String: String] = ["Apple": "AAPL", "Microsoft": "MSFT", "Google": "GOOG", "Amazon": "AMZN", "Facebook": "FB"]
+    @IBOutlet weak var companyNameLabel: UILabel!
+    @IBOutlet weak var companySymbolLabel: UILabel!
+    @IBOutlet weak var priceLabel: UILabel!
+    @IBOutlet weak var priceChangeLabel: UILabel!
+    @IBOutlet weak var companyPickerView: UIPickerView!
+    @IBOutlet weak var activityIndicator: UIActivityIndicatorView!
+    @IBOutlet var imageView: UIImageView!
     
+    private let reachabilityService = ReachabilityService()
     
-    // Реализация метода UIPickerViewDataSource
-    func numberOfComponents(in pickerView: UIPickerView) -> Int {
-        return 1
+    private let companiesFixed: [String: String] = ["Apple": "AAPL", "Microsoft": "MSFT", "Google": "GOOG", "Amazon": "AMZN", "Facebook": "FB"]
+    
+    var companiesDict: [String:String] = [:]
+    var companiesArr: [String] = []
+    
+    @IBAction func showHelpAction(_ sender: UIButton) {  // Вызов "Справки" с кнопки
+        let title = "How to use Stocks?"
+        let message = "Choose from the stock list below to get the most relevant info."
+        let helpAlert = UIAlertController(title: title, message: message, preferredStyle: .alert)
+        helpAlert.addAction(UIAlertAction(title: "OK", style: UIAlertAction.Style.default, handler: nil))
+        
+        self.present(helpAlert, animated: true, completion: nil)
     }
-    func pickerView(_ pickerView: UIPickerView, numberOfRowsInComponent component: Int) -> Int {
-        return self.companies.keys.count
+    
+    // MARK: - Обработка обычной ошибки
+    
+    func showErrorAlert() {  // Функция для обработки ошибок
+        let title = "An Error Occurred"
+        let message = "Try again later"
+        let errorAlert = UIAlertController(title: title, message: message, preferredStyle: .alert)
+        errorAlert.addAction(UIAlertAction(title: "OK", style: UIAlertAction.Style.default, handler: nil))
+    
+        self.present(errorAlert, animated: true, completion: nil)
     }
     
+    // MARK: - Обработка сетевой ошибки
     
-    // Реализация метода UIPickerViewDelegate
-    func pickerView(_ pickerView: UIPickerView, titleForRow row: Int, forComponent component: Int) -> String? {
-        return Array(self.companies.keys)[row]
+    func showNetworkErrorAlert() {  // Функция для обработки ошибок сети
+        let title = "No internet connection"
+        let message = "Check network settings and try again later"
+        let networkErrorAlert = UIAlertController(title: title, message: message, preferredStyle: .alert)
+        networkErrorAlert.addAction(UIAlertAction(title: "OK", style: UIAlertAction.Style.default, handler: nil))
+    
+        self.present(networkErrorAlert, animated: true, completion: nil)
     }
-
     
-    // Реализация метода отправки запроса на сервер
-    private func requestQuote(for symbol: String) {
-        let url = URL(string: "https://query1.finance.yahoo.com/v7/finance/quote?symbols=\(symbol)")!
-        let dataTask = URLSession.shared.dataTask(with: url) {(data, response, error) in
-            guard           // В случае ошибки вывод сообщения в консоль
+    // MARK: - Запрос списка компаний
+    
+    private func requestSymbolList() {
+        
+        guard let url = URL(string: "https://cloud.iexapis.com/stable/stock/market/list/gainers?&token=pk_1bcb2ecf9a8b4d58b36f6e7f375b5669") else {
+            showErrorAlert() // Обработка ошибки
+            return
+        }
+        
+        let dataTask = URLSession.shared.dataTask(with: url) { [weak self] (data, response, error) in
+            guard let self = self else {
+                return
+            }
+            guard // В случае ошибки вывод сообщения в консоль
                 error == nil,
                 (response as? HTTPURLResponse)?.statusCode == 200,
                 let data = data
@@ -40,36 +76,169 @@ class ViewController: UIViewController, UIPickerViewDataSource, UIPickerViewDele
                 print("!!! Network Error")
                 return
             }
+
+            self.parseSymbolList(data: data)
+        }
+        
+        if reachabilityService.isConnected {
+            dataTask.resume()
+        } else {
+            showNetworkErrorAlert()
+            companiesArr = Array(companiesFixed.keys)
+            companiesDict = companiesFixed
+            companyPickerView.reloadAllComponents()
+            return
+        }
+    }
+    
+    // MARK: - Парсинг списка компаний
+    
+    private func parseSymbolList(data: Data) {
+        do {
+            let jsonObject = try JSONSerialization.jsonObject(with: data)
             
+            guard let json = jsonObject as? Array<Dictionary<String, Any>> else {
+                print("!!! Invalid JSON")
+                return
+            }
+            
+            companiesArr.removeAll()
+            
+            json.forEach { node in
+                guard let symbol = node["symbol"] as? String,
+                      let companyName = node["companyName"] as? String
+                      else {
+                    return
+                }
+                self.companiesDict.updateValue(symbol, forKey: companyName)
+                self.companiesArr.append(companyName)
+            }
+            
+            DispatchQueue.main.async { [weak self] in
+                guard let self = self,
+                      let symbol = self.companiesDict.first?.value
+                else {
+                    return
+                }
+                self.companyPickerView.reloadAllComponents()
+                self.requestQuote(for: symbol)
+            }
+        } catch {
+            print("!!! Error fetching JSON" + error.localizedDescription)
+        }
+    }
+    
+    // MARK: - Реализация метода отправки запроса на сервер
+    
+    private func requestQuote(for symbol: String) {
+        
+        guard let url = URL(string: "https://cloud.iexapis.com/stable/stock/\(symbol)/quote?&token=pk_1bcb2ecf9a8b4d58b36f6e7f375b5669") else {
+            showErrorAlert() // Обработка ошибки
+            return
+        }
+        
+        let dataTask = URLSession.shared.dataTask(with: url) { [weak self] (data, response, error) in
+            guard let self = self else {
+                return
+            }
+            guard // В случае ошибки вывод сообщения в консоль
+                error == nil,
+                (response as? HTTPURLResponse)?.statusCode == 200,
+                let data = data
+            else {
+                print("!!! Network Error")
+                return
+            }
+
             self.parseQuote(data: data)
         }
         
-        dataTask.resume()
+        if reachabilityService.isConnected {
+            dataTask.resume()
+        } else {
+            showNetworkErrorAlert()
+            return
+        }
     }
     
+    // MARK: - Запрос картинки
     
-    // Реализация метода парсинга: получаем JSON
+    private func requestImage(for symbol: String) {
+        
+        guard let url = URL(string: "https://cloud.iexapis.com/stable/stock/\(symbol)/logo?&token=pk_1bcb2ecf9a8b4d58b36f6e7f375b5669") else {
+                showErrorAlert() // Обработка ошибки
+                return
+        }
+        
+        let dataTask = URLSession.shared.dataTask(with: url) { [weak self] (data, response, error) in
+            guard let self = self else {
+                return
+            }
+            guard // В случае ошибки вывод сообщения в консоль
+                error == nil,
+                (response as? HTTPURLResponse)?.statusCode == 200,
+                let data = data
+            else {
+                print("!!! Network Error")
+                return
+            }
+
+            self.parseImage(data: data)
+        }
+        
+        if reachabilityService.isConnected {
+            imageView.image = UIImage(named: "Placeholder")
+            dataTask.resume()
+        } else {
+            showNetworkErrorAlert()
+            return
+        }
+    }
+    
+    // MARK: - Парсинг картинки
+    
+    private func parseImage(data: Data) {
+        do {
+            let jsonObject = try JSONSerialization.jsonObject(with: data)
+            
+            guard
+                let json = jsonObject as? [String: Any],
+                let imageUrl = json["url"] as? String
+            else {
+                print("!!! Invalid JSON")
+                return
+            }
+            
+            guard let url = URL(string: imageUrl) else {
+                return
+            }
+            
+            downloadImage(from: url)
+            
+        } catch {
+            print("!!! Error fetching JSON" + error.localizedDescription)
+        }
+    }
+    
+    // MARK: - Реализация метода парсинга: получаем JSON
+    
     private func parseQuote(data: Data) {
         do {
             let jsonObject = try JSONSerialization.jsonObject(with: data)
             
             guard
                 let json = jsonObject as? [String: Any],
-                let quoteResponse = json["quoteResponse"] as? [String: Any],
-                let resultArray = quoteResponse["result"] as? Array<Any>,
-                let resultObject = resultArray[0] as? [String:Any],
-                let companyName = resultObject["longName"] as? String,
-                let companySymbol = resultObject["symbol"] as? String,
-                let price = resultObject["regularMarketPrice"] as? Double,
-                let priceChange = resultObject["regularMarketChange"] as? Double
+                let companyName = json["companyName"] as? String,
+                let companySymbol = json["symbol"] as? String,
+                let price = json["latestPrice"] as? Double,
+                let priceChange = json["change"] as? Double
             else {
                 print("!!! Invalid JSON")
                 return
             }
             
-            
-            DispatchQueue.main.async {
-                self.displayStockInfo(companyName: companyName,
+            DispatchQueue.main.async { [weak self] in
+                self?.displayStockInfo(companyName: companyName,
                                       symbol: companySymbol,
                                       price: price,
                                       priceChange: priceChange)
@@ -79,64 +248,105 @@ class ViewController: UIViewController, UIPickerViewDataSource, UIPickerViewDele
         }
     }
     
+    // MARK: - Вывод информации об акции на экран
     
-    // Реализация метода вывода информации об акции на экран
     private func displayStockInfo(companyName: String, symbol: String, price: Double, priceChange: Double) {
-        self.activityIndicator.stopAnimating()
-        self.companyNameLabel.text = companyName
-        self.companySymbolLabel.text = symbol
-        self.priceLabel.text = "\(price)"
-        self.priceChangeLabel.text = "\(priceChange)"
-    }
-    
-    
-    // Реализация метода pickerView для выбора разных акций
-//    func pickerView(_ pickerView: UIPickerView, didSelectRow row: Int, inComponent component: Int) {
-//        self.activityIndicator.startAnimating()
-//
-//        let selectedSymbol = Array(self.companies.values)[row]
-//        self.requestQuote(for: selectedSymbol)
-//    }
-    
-    
-    //Реализация метода обновления информации по акции при старте приложения
-    private func requestQuoteUpdate() {
-        self.activityIndicator.startAnimating()
-        self.companyNameLabel.text = "—" //При обновлении информации текст будет заменяться прочерком
-        self.companySymbolLabel.text = "—"
-        self.priceLabel.text = "—"
-        self.priceChangeLabel.text = "—"
         
-        let selectedRow = self.companyPickerView.selectedRow(inComponent: 0)
-        let selectedSymbol = Array(self.companies.values)[selectedRow]
-        self.requestQuote(for: selectedSymbol)
+        activityIndicator.stopAnimating()
+        companyNameLabel.text = companyName
+        companySymbolLabel.text = symbol
+        priceLabel.text = "\(price)"
+        priceChangeLabel.text = "\(priceChange)"
+        
+        if priceChange == .zero {
+            priceChangeLabel.textColor = UIColor.black
+        } else {
+            priceChangeLabel.textColor = priceChange > .zero ? UIColor.green : UIColor.red
+        }
     }
     
+    // MARK: - Обновление информации по акции при старте приложения
     
-    func pickerView(_ pickerView: UIPickerView, didSelectRow row: Int, inComponent component: Int) {
-        self.requestQuoteUpdate()
+    private func requestQuoteUpdate(symbol: String) {
+        
+        activityIndicator.startAnimating()
+        companyNameLabel.text = "—" //При обновлении информации текст будет заменяться прочерком
+        companySymbolLabel.text = "—"
+        priceLabel.text = "—"
+        priceChangeLabel.text = "—"
+        priceChangeLabel.textColor = UIColor.black
+        
+        let selectedRow = companyPickerView.selectedRow(inComponent: 0)
+        let selectedCompany = companiesArr[selectedRow]
+        guard let selectedSymbol = companiesDict[selectedCompany] else {
+            return
+        }
+        requestQuote(for: selectedSymbol)
+        requestImage(for: selectedSymbol)
     }
     
+    // MARK: - viewDidLoad
     
-    @IBOutlet weak var companyNameLabel: UILabel!
-    @IBOutlet weak var companySymbolLabel: UILabel!
-    @IBOutlet weak var priceLabel: UILabel!
-    @IBOutlet weak var priceChangeLabel: UILabel!
-    @IBOutlet weak var companyPickerView: UIPickerView!
-    @IBOutlet weak var activityIndicator: UIActivityIndicatorView!
-    
-
     override func viewDidLoad() {
         super.viewDidLoad()
         
-        self.companyPickerView.dataSource = self
-        self.companyPickerView.delegate = self
+        companyPickerView.dataSource = self
+        companyPickerView.delegate = self
         
-        self.activityIndicator.hidesWhenStopped = true
+        activityIndicator.hidesWhenStopped = true
         
-        self.requestQuoteUpdate()
+        imageView.image = UIImage(named: "Placeholder")
+        requestSymbolList()
     }
-
-
 }
 
+// MARK: - UIPickerViewDataSource
+
+extension ViewController: UIPickerViewDataSource {
+
+    func numberOfComponents(in pickerView: UIPickerView) -> Int {
+        return 1
+    }
+
+    func pickerView(_ pickerView: UIPickerView, numberOfRowsInComponent component: Int) -> Int {
+        return companiesArr.count
+    }
+}
+
+// MARK: - UIPickerViewDelegate
+
+extension ViewController: UIPickerViewDelegate {
+
+    func pickerView(_ pickerView: UIPickerView, titleForRow row: Int, forComponent component: Int) -> String? {
+        return companiesArr[row]
+    }
+
+    func pickerView(_ pickerView: UIPickerView, didSelectRow row: Int, inComponent component: Int) {
+        let companyName = companiesArr[row]
+        guard let symbol = companiesDict[companyName] else {
+            return
+        }
+        requestQuoteUpdate(symbol: symbol)
+    }
+}
+
+// MARK: - UIImage
+
+private extension ViewController {
+    
+    func getData(from url: URL, completion: @escaping (Data?, URLResponse?, Error?) -> ()) {
+        URLSession.shared.dataTask(with: url, completionHandler: completion).resume()
+    }
+
+    func downloadImage(from url: URL) {
+        getData(from: url) { data, response, error in
+            guard let data = data, error == nil else {
+                return
+            }
+
+            DispatchQueue.main.async() { [weak self] in
+                self?.imageView.image = UIImage(data: data)
+            }
+        }
+    }
+}

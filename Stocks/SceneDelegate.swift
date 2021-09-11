@@ -2,7 +2,7 @@
 //  SceneDelegate.swift
 //  Stocks
 //
-//  Created by Никита Зименко on 11.07.2021.
+//  Created by Никита Зименко on 04.09.2021.
 //
 
 import UIKit

@@ -6,6 +6,7 @@
 //
 
 import UIKit
+import Alamofire
 
 final class ViewController: UIViewController {
     
@@ -270,7 +271,7 @@ final class ViewController: UIViewController {
     private func requestQuoteUpdate(symbol: String) {
         
         activityIndicator.startAnimating()
-        companyNameLabel.text = "—" //При обновлении информации текст будет заменяться прочерком
+        companyNameLabel.text = "—" // При обновлении информации текст будет заменяться прочерком
         companySymbolLabel.text = "—"
         priceLabel.text = "—"
         priceChangeLabel.text = "—"
